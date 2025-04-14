@@ -1,9 +1,9 @@
 import 'dart:io';
 import 'package:flutter/material.dart';
-import 'package:flutter/services.dart'; // For rootBundle
+import 'package:flutter/services.dart';
 import 'package:video_player/video_player.dart';
-import 'package:path_provider/path_provider.dart'; // For getTemporaryDirectory
-import '../utils/audio_sync.dart'; // Your helper
+import 'package:path_provider/path_provider.dart';
+import '../utils/audio_sync.dart';
 
 class VideoComparisonPage extends StatefulWidget {
   final File userVideo;
@@ -24,7 +24,7 @@ class _VideoComparisonPageState extends State<VideoComparisonPage> {
   late VideoPlayerController _refController;
   double _refOpacity = 0.5;
   bool _isInitialized = false;
-  bool _hasSynced = false; // Tracks whether we've already done the initial sync
+  bool _hasSynced = false;
 
   @override
   void initState() {
@@ -47,9 +47,7 @@ class _VideoComparisonPageState extends State<VideoComparisonPage> {
       _refController.initialize(),
     ]);
 
-    setState(() {
-      _isInitialized = true;
-    });
+    setState(() => _isInitialized = true);
   }
 
   @override
@@ -59,42 +57,32 @@ class _VideoComparisonPageState extends State<VideoComparisonPage> {
     super.dispose();
   }
 
-  /// Toggles play/pause. On first play, does audio‑sync then plays both.
-  /// Subsequent plays simply resume from paused positions.
   Future<void> _togglePlayPause() async {
     if (_userController.value.isPlaying && _refController.value.isPlaying) {
-      // Both are playing → pause both
       await _userController.pause();
       await _refController.pause();
     } else {
       if (!_hasSynced) {
-        // First-time play: perform synchronization workflow
         final userAudio = await AudioSync.extractAudio(
           widget.userVideo.path,
           'user_audio',
         );
-
         final tempDir = await getTemporaryDirectory();
         final refTempPath = '${tempDir.path}/ref_video.mp4';
         final byteData = await rootBundle.load(widget.referenceVideoAsset);
         await File(refTempPath).writeAsBytes(byteData.buffer.asUint8List());
-
         final refAudio = await AudioSync.extractAudio(refTempPath, 'ref_audio');
-
         final userBeat = await AudioSync.detectFirstBeat(userAudio);
         final refBeat = await AudioSync.detectFirstBeat(refAudio);
-
         await Future.wait([
           _userController.seekTo(userBeat),
           _refController.seekTo(refBeat),
         ]);
-
-        _hasSynced = true; // Mark that we've done the initial sync
+        _hasSynced = true;
       }
-      // Play or resume both
       await Future.wait([_userController.play(), _refController.play()]);
     }
-    setState(() {}); // Refresh the icon
+    setState(() {});
   }
 
   @override
@@ -111,21 +99,28 @@ class _VideoComparisonPageState extends State<VideoComparisonPage> {
       body: Column(
         children: [
           Expanded(
-            child: Stack(
-              alignment: Alignment.center,
-              children: [
-                AspectRatio(
-                  aspectRatio: _userController.value.aspectRatio,
-                  child: VideoPlayer(_userController),
-                ),
-                Opacity(
-                  opacity: _refOpacity,
-                  child: AspectRatio(
-                    aspectRatio: _refController.value.aspectRatio,
-                    child: VideoPlayer(_refController),
+            // Constrain to the user video's aspect ratio
+            child: AspectRatio(
+              aspectRatio: _userController.value.aspectRatio,
+              child: Stack(
+                alignment: Alignment.center,
+                children: [
+                  // User video fills the box
+                  VideoPlayer(_userController),
+                  // Reference video is contained without distortion
+                  Opacity(
+                    opacity: _refOpacity,
+                    child: FittedBox(
+                      fit: BoxFit.contain,
+                      child: SizedBox(
+                        width: _refController.value.size.width,
+                        height: _refController.value.size.height,
+                        child: VideoPlayer(_refController),
+                      ),
+                    ),
                   ),
-                ),
-              ],
+                ],
+              ),
             ),
           ),
           Padding(

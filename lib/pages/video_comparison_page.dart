@@ -1,6 +1,9 @@
 import 'dart:io';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart'; // For rootBundle
 import 'package:video_player/video_player.dart';
+import 'package:path_provider/path_provider.dart'; // For getTemporaryDirectory
+import '../utils/audio_sync.dart'; // Your helper
 
 class VideoComparisonPage extends StatefulWidget {
   final File userVideo;
@@ -19,26 +22,35 @@ class VideoComparisonPage extends StatefulWidget {
 class _VideoComparisonPageState extends State<VideoComparisonPage> {
   late VideoPlayerController _userController;
   late VideoPlayerController _refController;
-  double _refOpacity = 0.5; // Start with 50% opacity
+  double _refOpacity = 0.5;
+  bool _isInitialized = false;
 
   @override
   void initState() {
     super.initState();
-    // Initialize the user's video controller with mixing enabled.
+    _initializeControllers();
+  }
+
+  Future<void> _initializeControllers() async {
+    // Initialize both controllers with mixWithOthers enabled:
     _userController = VideoPlayerController.file(
       widget.userVideo,
       videoPlayerOptions: VideoPlayerOptions(mixWithOthers: true),
-    )..initialize().then((_) {
-        setState(() {});
-      });
-
-    // Initialize the reference video controller from asset with mixing enabled.
+    );
     _refController = VideoPlayerController.asset(
       widget.referenceVideoAsset,
       videoPlayerOptions: VideoPlayerOptions(mixWithOthers: true),
-    )..initialize().then((_) {
-        setState(() {});
-      });
+    );
+
+    // Wait for both to finish initializing
+    await Future.wait([
+      _userController.initialize(),
+      _refController.initialize(),
+    ]);
+
+    setState(() {
+      _isInitialized = true;
+    });
   }
 
   @override
@@ -48,30 +60,44 @@ class _VideoComparisonPageState extends State<VideoComparisonPage> {
     super.dispose();
   }
 
-  // Toggle play/pause simultaneously for both videos.
-  Future<void> togglePlayPause() async {
-    // If either video is not playing, play both.
-    if (!_userController.value.isPlaying || !_refController.value.isPlaying) {
-      await Future.wait([
-        _userController.play(),
-        _refController.play(),
-      ]);
-    } else {
-      // Otherwise, pause both.
-      await Future.wait([
-        _userController.pause(),
-        _refController.pause(),
-      ]);
-    }
-    setState(() {});
+  /// Extracts audio, detects the first beat, seeks to those offsets, then plays.
+  Future<void> synchronizeAndPlay() async {
+    // 1) Extract audio from user video
+    final userAudio = await AudioSync.extractAudio(
+      widget.userVideo.path,
+      'user_audio',
+    );
+
+    // 2) Copy the reference asset to a temp file
+    final tempDir = await getTemporaryDirectory();
+    final refTempPath = '${tempDir.path}/ref_video.mp4';
+    final byteData = await rootBundle.load(widget.referenceVideoAsset);
+    await File(refTempPath).writeAsBytes(byteData.buffer.asUint8List());
+
+    // 3) Extract audio from reference video
+    final refAudio = await AudioSync.extractAudio(refTempPath, 'ref_audio');
+
+    // 4) Detect first beat in each audio
+    final userBeat = await AudioSync.detectFirstBeat(userAudio);
+    final refBeat = await AudioSync.detectFirstBeat(refAudio);
+
+    // 5) Seek both videos to their beat timestamps
+    await Future.wait([
+      _userController.seekTo(userBeat),
+      _refController.seekTo(refBeat),
+    ]);
+
+    // 6) Play both simultaneously
+    await Future.wait([_userController.play(), _refController.play()]);
+
+    setState(() {}); // Refresh play/pause icon
   }
 
   @override
   Widget build(BuildContext context) {
-    // Ensure both video controllers are initialized.
-    if (!_userController.value.isInitialized || !_refController.value.isInitialized) {
+    if (!_isInitialized) {
       return Scaffold(
-        appBar: AppBar(title: const Text('Comparing Videos')),
+        appBar: AppBar(title: const Text('Video Comparison')),
         body: const Center(child: CircularProgressIndicator()),
       );
     }
@@ -84,12 +110,10 @@ class _VideoComparisonPageState extends State<VideoComparisonPage> {
             child: Stack(
               alignment: Alignment.center,
               children: [
-                // User's video.
                 AspectRatio(
                   aspectRatio: _userController.value.aspectRatio,
                   child: VideoPlayer(_userController),
                 ),
-                // Overlay the reference video with adjustable opacity.
                 Opacity(
                   opacity: _refOpacity,
                   child: AspectRatio(
@@ -101,17 +125,17 @@ class _VideoComparisonPageState extends State<VideoComparisonPage> {
             ),
           ),
           Padding(
-            padding: const EdgeInsets.all(16.0),
+            padding: const EdgeInsets.all(16),
             child: Column(
               children: [
-                // A single toggle button to play/pause both videos.
                 IconButton(
                   icon: Icon(
-                    (_userController.value.isPlaying && _refController.value.isPlaying)
+                    (_userController.value.isPlaying &&
+                            _refController.value.isPlaying)
                         ? Icons.pause
                         : Icons.play_arrow,
                   ),
-                  onPressed: togglePlayPause,
+                  onPressed: synchronizeAndPlay,
                 ),
                 const SizedBox(height: 16),
                 const Text('Reference Video Transparency'),
@@ -121,11 +145,7 @@ class _VideoComparisonPageState extends State<VideoComparisonPage> {
                   divisions: 100,
                   value: _refOpacity,
                   label: '${(_refOpacity * 100).round()}%',
-                  onChanged: (value) {
-                    setState(() {
-                      _refOpacity = value;
-                    });
-                  },
+                  onChanged: (v) => setState(() => _refOpacity = v),
                 ),
               ],
             ),

@@ -22,6 +22,8 @@ class VideoComparisonPage extends StatefulWidget {
 class _VideoComparisonPageState extends State<VideoComparisonPage> {
   late VideoPlayerController _userController;
   late VideoPlayerController _refController;
+  List<double>? _userWaveform;
+  List<double>? _refWaveform;
   double _refOpacity = 0.5;
   bool _isInitialized = false;
   bool _hasSynced = false;
@@ -29,10 +31,11 @@ class _VideoComparisonPageState extends State<VideoComparisonPage> {
   @override
   void initState() {
     super.initState();
-    _initializeControllers();
+    _initializeEverything();
   }
 
-  Future<void> _initializeControllers() async {
+  Future<void> _initializeEverything() async {
+    // 1) Initialize video controllers
     _userController = VideoPlayerController.file(
       widget.userVideo,
       videoPlayerOptions: VideoPlayerOptions(mixWithOthers: true),
@@ -41,13 +44,36 @@ class _VideoComparisonPageState extends State<VideoComparisonPage> {
       widget.referenceVideoAsset,
       videoPlayerOptions: VideoPlayerOptions(mixWithOthers: true),
     );
-
     await Future.wait([
       _userController.initialize(),
       _refController.initialize(),
     ]);
 
-    setState(() => _isInitialized = true);
+    // 2) Extract audio and load waveforms
+    final userAudio = await AudioSync.extractAudio(
+      widget.userVideo.path,
+      'user_audio',
+    );
+    final tempDir = await getTemporaryDirectory();
+    final refTempPath = '${tempDir.path}/ref_video.mp4';
+    final byteData = await rootBundle.load(widget.referenceVideoAsset);
+    await File(refTempPath).writeAsBytes(byteData.buffer.asUint8List());
+    final refAudio = await AudioSync.extractAudio(refTempPath, 'ref_audio');
+
+    final userWave = await AudioSync.loadWaveform(userAudio);
+    final refWave = await AudioSync.loadWaveform(refAudio);
+
+    // 3) Pad the shorter waveform with zeros
+    final maxLen =
+        userWave.length > refWave.length ? userWave.length : refWave.length;
+    final paddedUser = List<double>.from(userWave)..length = maxLen;
+    final paddedRef = List<double>.from(refWave)..length = maxLen;
+
+    setState(() {
+      _userWaveform = paddedUser;
+      _refWaveform = paddedRef;
+      _isInitialized = true;
+    });
   }
 
   @override
@@ -87,7 +113,7 @@ class _VideoComparisonPageState extends State<VideoComparisonPage> {
 
   @override
   Widget build(BuildContext context) {
-    if (!_isInitialized) {
+    if (!_isInitialized || _userWaveform == null || _refWaveform == null) {
       return Scaffold(
         appBar: AppBar(title: const Text('Video Comparison')),
         body: const Center(child: CircularProgressIndicator()),
@@ -98,16 +124,14 @@ class _VideoComparisonPageState extends State<VideoComparisonPage> {
       appBar: AppBar(title: const Text('Video Comparison')),
       body: Column(
         children: [
+          // Video display
           Expanded(
-            // Constrain to the user video's aspect ratio
             child: AspectRatio(
               aspectRatio: _userController.value.aspectRatio,
               child: Stack(
                 alignment: Alignment.center,
                 children: [
-                  // User video fills the box
                   VideoPlayer(_userController),
-                  // Reference video is contained without distortion
                   Opacity(
                     opacity: _refOpacity,
                     child: FittedBox(
@@ -123,6 +147,8 @@ class _VideoComparisonPageState extends State<VideoComparisonPage> {
               ),
             ),
           ),
+
+          // Controls
           Padding(
             padding: const EdgeInsets.all(16),
             child: Column(
@@ -139,8 +165,8 @@ class _VideoComparisonPageState extends State<VideoComparisonPage> {
                 const SizedBox(height: 16),
                 const Text('Reference Video Transparency'),
                 Slider(
-                  min: 0.0,
-                  max: 1.0,
+                  min: 0,
+                  max: 1,
                   divisions: 100,
                   value: _refOpacity,
                   label: '${(_refOpacity * 100).round()}%',
@@ -149,8 +175,50 @@ class _VideoComparisonPageState extends State<VideoComparisonPage> {
               ],
             ),
           ),
+
+          // Waveforms
+          SizedBox(
+            height: 100,
+            child: CustomPaint(
+              painter: _WaveformPainter(_userWaveform!, Colors.blue),
+              size: Size.infinite,
+            ),
+          ),
+          SizedBox(
+            height: 100,
+            child: CustomPaint(
+              painter: _WaveformPainter(_refWaveform!, Colors.red),
+              size: Size.infinite,
+            ),
+          ),
         ],
       ),
     );
   }
+}
+
+/// Paints a waveform given a list of normalized amplitudes.
+class _WaveformPainter extends CustomPainter {
+  final List<double> waveform;
+  final Color color;
+
+  _WaveformPainter(this.waveform, this.color);
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    final paint =
+        Paint()
+          ..strokeWidth = 1
+          ..color = color;
+    final midY = size.height / 2;
+    final dx = size.width / waveform.length;
+    for (int i = 0; i < waveform.length; i++) {
+      final x = i * dx;
+      final y = waveform[i] * midY;
+      canvas.drawLine(Offset(x, midY - y), Offset(x, midY + y), paint);
+    }
+  }
+
+  @override
+  bool shouldRepaint(covariant _WaveformPainter old) => false;
 }

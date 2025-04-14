@@ -32,7 +32,6 @@ class _VideoComparisonPageState extends State<VideoComparisonPage> {
   }
 
   Future<void> _initializeControllers() async {
-    // Initialize both controllers with mixWithOthers enabled:
     _userController = VideoPlayerController.file(
       widget.userVideo,
       videoPlayerOptions: VideoPlayerOptions(mixWithOthers: true),
@@ -42,7 +41,6 @@ class _VideoComparisonPageState extends State<VideoComparisonPage> {
       videoPlayerOptions: VideoPlayerOptions(mixWithOthers: true),
     );
 
-    // Wait for both to finish initializing
     await Future.wait([
       _userController.initialize(),
       _refController.initialize(),
@@ -60,37 +58,43 @@ class _VideoComparisonPageState extends State<VideoComparisonPage> {
     super.dispose();
   }
 
-  /// Extracts audio, detects the first beat, seeks to those offsets, then plays.
-  Future<void> synchronizeAndPlay() async {
-    // 1) Extract audio from user video
-    final userAudio = await AudioSync.extractAudio(
-      widget.userVideo.path,
-      'user_audio',
-    );
+  /// Toggles play/pause. On play, does audio‑sync then plays both.
+  Future<void> _togglePlayPause() async {
+    if (_userController.value.isPlaying && _refController.value.isPlaying) {
+      // Pause both
+      await _userController.pause();
+      await _refController.pause();
+    } else {
+      // 1) Extract audio from user video
+      final userAudio = await AudioSync.extractAudio(
+        widget.userVideo.path,
+        'user_audio',
+      );
 
-    // 2) Copy the reference asset to a temp file
-    final tempDir = await getTemporaryDirectory();
-    final refTempPath = '${tempDir.path}/ref_video.mp4';
-    final byteData = await rootBundle.load(widget.referenceVideoAsset);
-    await File(refTempPath).writeAsBytes(byteData.buffer.asUint8List());
+      // 2) Copy reference asset to temp file
+      final tempDir = await getTemporaryDirectory();
+      final refTempPath = '${tempDir.path}/ref_video.mp4';
+      final byteData = await rootBundle.load(widget.referenceVideoAsset);
+      await File(refTempPath).writeAsBytes(byteData.buffer.asUint8List());
 
-    // 3) Extract audio from reference video
-    final refAudio = await AudioSync.extractAudio(refTempPath, 'ref_audio');
+      // 3) Extract audio from reference video
+      final refAudio = await AudioSync.extractAudio(refTempPath, 'ref_audio');
 
-    // 4) Detect first beat in each audio
-    final userBeat = await AudioSync.detectFirstBeat(userAudio);
-    final refBeat = await AudioSync.detectFirstBeat(refAudio);
+      // 4) Detect first beat in each
+      final userBeat = await AudioSync.detectFirstBeat(userAudio);
+      final refBeat = await AudioSync.detectFirstBeat(refAudio);
 
-    // 5) Seek both videos to their beat timestamps
-    await Future.wait([
-      _userController.seekTo(userBeat),
-      _refController.seekTo(refBeat),
-    ]);
+      // 5) Seek both to beat positions
+      await Future.wait([
+        _userController.seekTo(userBeat),
+        _refController.seekTo(refBeat),
+      ]);
 
-    // 6) Play both simultaneously
-    await Future.wait([_userController.play(), _refController.play()]);
+      // 6) Play both
+      await Future.wait([_userController.play(), _refController.play()]);
+    }
 
-    setState(() {}); // Refresh play/pause icon
+    setState(() {}); // Refresh icon
   }
 
   @override
@@ -135,7 +139,7 @@ class _VideoComparisonPageState extends State<VideoComparisonPage> {
                         ? Icons.pause
                         : Icons.play_arrow,
                   ),
-                  onPressed: synchronizeAndPlay,
+                  onPressed: _togglePlayPause, // Updated toggle logic
                 ),
                 const SizedBox(height: 16),
                 const Text('Reference Video Transparency'),

@@ -1,4 +1,5 @@
 import 'dart:io';
+import 'dart:math';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:video_player/video_player.dart';
@@ -64,10 +65,15 @@ class _VideoComparisonPageState extends State<VideoComparisonPage> {
     final refWave = await AudioSync.loadWaveform(refAudio);
 
     // 3) Pad the shorter waveform with zeros
-    final maxLen =
-        userWave.length > refWave.length ? userWave.length : refWave.length;
-    final paddedUser = List<double>.from(userWave)..length = maxLen;
-    final paddedRef = List<double>.from(refWave)..length = maxLen;
+    final maxLen = max(userWave.length, refWave.length);
+    final paddedUser = List<double>.from(userWave);
+    final paddedRef = List<double>.from(refWave);
+    if (paddedUser.length < maxLen) {
+      paddedUser.addAll(List<double>.filled(maxLen - paddedUser.length, 0.0));
+    }
+    if (paddedRef.length < maxLen) {
+      paddedRef.addAll(List<double>.filled(maxLen - paddedRef.length, 0.0));
+    }
 
     setState(() {
       _userWaveform = paddedUser;
@@ -147,7 +153,6 @@ class _VideoComparisonPageState extends State<VideoComparisonPage> {
               ),
             ),
           ),
-
           // Controls
           Padding(
             padding: const EdgeInsets.all(16),
@@ -175,7 +180,6 @@ class _VideoComparisonPageState extends State<VideoComparisonPage> {
               ],
             ),
           ),
-
           // Waveforms
           SizedBox(
             height: 100,
@@ -197,7 +201,6 @@ class _VideoComparisonPageState extends State<VideoComparisonPage> {
   }
 }
 
-/// Paints a waveform given a list of normalized amplitudes.
 class _WaveformPainter extends CustomPainter {
   final List<double> waveform;
   final Color color;

@@ -36,7 +36,7 @@ class _VideoComparisonPageState extends State<VideoComparisonPage> {
   }
 
   Future<void> _initializeEverything() async {
-    // 1) Initialize video controllers
+    // Initialize video controllers
     _userController = VideoPlayerController.file(
       widget.userVideo,
       videoPlayerOptions: VideoPlayerOptions(mixWithOthers: true),
@@ -50,20 +50,17 @@ class _VideoComparisonPageState extends State<VideoComparisonPage> {
       _refController.initialize(),
     ]);
 
-    // 2) Extract audio from both videos
+    // Extract audio and load waveforms
     final userAudio = await AudioSync.extractAudio(
       widget.userVideo.path,
       'user_audio',
     );
-
     final tempDir = await getTemporaryDirectory();
     final refTempPath = '${tempDir.path}/ref_video.mp4';
     final byteData = await rootBundle.load(widget.referenceVideoAsset);
     await File(refTempPath).writeAsBytes(byteData.buffer.asUint8List());
-
     final refAudio = await AudioSync.extractAudio(refTempPath, 'ref_audio');
 
-    // 3) Load downsampled waveforms (both will be length 1024)
     final userWave = await AudioSync.loadWaveform(userAudio, bucketCount: 1024);
     final refWave = await AudioSync.loadWaveform(refAudio, bucketCount: 1024);
 
@@ -87,7 +84,6 @@ class _VideoComparisonPageState extends State<VideoComparisonPage> {
       await _refController.pause();
     } else {
       if (!_hasSynced) {
-        // Sync on first play
         final userAudio = await AudioSync.extractAudio(
           widget.userVideo.path,
           'user_audio',
@@ -123,48 +119,25 @@ class _VideoComparisonPageState extends State<VideoComparisonPage> {
       appBar: AppBar(title: const Text('Video Comparison')),
       body: Column(
         children: [
-          // Video display: correct aspect for both
-          LayoutBuilder(
-            builder: (context, constraints) {
-              final maxW = constraints.maxWidth;
-              final userRatio = _userController.value.aspectRatio;
-              final refRatio = _refController.value.aspectRatio;
-
-              // Container height based on user video
-              final userH = maxW / userRatio;
-
-              // Reference video natural size
-              final refWUnclamped = userH * refRatio;
-              final refW = min(maxW, refWUnclamped);
-              final refH = refW / refRatio;
-              final refLeft = (maxW - refW) / 2;
-              final refTop = (userH - refH) / 2;
-
-              return SizedBox(
-                width: maxW,
-                height: userH,
-                child: Stack(
-                  children: [
-                    // User video fills container
-                    Positioned.fill(child: VideoPlayer(_userController)),
-                    // Reference video centered at its natural size
-                    Positioned(
-                      left: refLeft,
-                      top: refTop,
-                      width: refW,
-                      height: refH,
-                      child: Opacity(
-                        opacity: _refOpacity,
-                        child: VideoPlayer(_refController),
-                      ),
-                    ),
-                  ],
+          // VIDEO DISPLAY: preserve both aspect ratios without stretching
+          AspectRatio(
+            aspectRatio: _userController.value.aspectRatio,
+            child: Stack(
+              alignment: Alignment.center,
+              children: [
+                VideoPlayer(_userController),
+                Opacity(
+                  opacity: _refOpacity,
+                  child: AspectRatio(
+                    aspectRatio: _refController.value.aspectRatio,
+                    child: VideoPlayer(_refController),
+                  ),
                 ),
-              );
-            },
+              ],
+            ),
           ),
 
-          // Controls
+          // CONTROLS
           Padding(
             padding: const EdgeInsets.all(16),
             child: Column(
@@ -185,14 +158,14 @@ class _VideoComparisonPageState extends State<VideoComparisonPage> {
                   max: 1.0,
                   divisions: 100,
                   value: _refOpacity,
-                  label: '${(_refOpacity * 100).round()}%',
+                  label: '\${(_refOpacity * 100).round()}%',
                   onChanged: (v) => setState(() => _refOpacity = v),
                 ),
               ],
             ),
           ),
 
-          // Waveforms
+          // WAVEFORMS
           SizedBox(
             height: 100,
             child: CustomPaint(
